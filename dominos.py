@@ -1,6 +1,9 @@
 import time
 import csv
 import io
+import requests
+from bs4 import BeautifulSoup
+import re
 import pandas as pd
 import streamlit as st
 from datetime import datetime
@@ -13,7 +16,7 @@ st.write("Enter an address to find percentage discount coupons at your local Dom
 
 def scrape_store_by_address(target_address, progress_bar, status_text):
     """
-    Scrape coupons with percentage discounts from a specific Dominos store by address
+    Scrape coupons with percentage discounts from Dominos using API calls and HTML parsing
     
     Parameters:
     target_address (str): Part of the address to identify the store
@@ -23,146 +26,84 @@ def scrape_store_by_address(target_address, progress_bar, status_text):
     Returns:
     pd.DataFrame: DataFrame containing coupon information
     """
-    # Setup Playwright
-    status_text.text("Setting up Playwright...")
-    progress_bar.progress(10)
-    
+    BASE_URL = "https://www.dominos.ca"
     coupons_data = []
     
-    with sync_playwright() as p:
-        try:
-            # Launch browser
-            browser = p.chromium.launch(headless=False)
-            page = browser.new_page()
-            
-            # Navigate to the Dominos location search page
-            status_text.text("Navigating to Dominos website...")
-            progress_bar.progress(20)
-            page.goto("https://www.dominos.ca/en/pages/order/#!/locations/search/")
-            page.wait_for_load_state("networkidle")
-            
-            # Click carryout option
-            page.locator("span.Carryout").click()
-            
-            # Enter "Montreal, QC" in the search input field
-            status_text.text("Searching for Montreal, QC locations...")
-            progress_bar.progress(30)
-            search_input = page.locator("#cityFinder")
-            search_input.fill("")
-            search_input.fill("Montreal, QC")
-            
-            # Click the search button
-            page.locator("button.js-searchboxButton").click()
-            page.wait_for_load_state("networkidle")
-            progress_bar.progress(40)
-            
-            # Find all store containers
-            store_containers = page.locator("div.store__list-container").all()
-            
-            target_store = None
-            store_full_address = ""
-            
-            # Find the store with the matching address
-            status_text.text(f"Looking for store with address containing: {target_address}")
-            progress_bar.progress(50)
-            for container in store_containers:
-                try:
-                    # Find the street element
-                    street_element = container.locator("div[data-quid$='-street']")
-                    street_text = street_element.inner_text()
-                    
-                    # Check if our target address is in the street text
-                    if target_address.lower() in street_text.lower():
-                        # Get the store's ID for the button click
-                        carryout_button = container.locator("button[data-type='Carryout']")
-                        store_id = carryout_button.get_attribute("data-id")
-                        
-                        # Get full address for display
-                        city_element = container.locator("div[data-quid$='-city'] span")
-                        store_full_address = f"{street_text}, {city_element.inner_text()}"
-                        
-                        target_store = {
-                            "container": container,
-                            "id": store_id,
-                            "button": carryout_button,
-                            "address": store_full_address
-                        }
-                        status_text.text(f"Found target store: {store_full_address}")
-                        break
-                except Exception:
-                    continue
-            
-            if not target_store:
-                status_text.text(f"No store found with address containing '{target_address}'")
-                return pd.DataFrame()
-            
-            # Click on the target store's carryout button
-            status_text.text(f"Selecting store: {target_store['address']}...")
-            progress_bar.progress(60)
-            target_store['button'].click()
-            page.wait_for_load_state("networkidle")
-            
-            # Navigate to coupons section
-            status_text.text("Navigating to coupons page...")
-            progress_bar.progress(70)
-            
-            # Click on the Coupons tile
-            page.locator("a[data-quid='entree-coupons']").click()
-            page.wait_for_load_state("networkidle")
-            
-            # Click on the "Find a Coupon" button
-            page.locator("a.findCouponButton").click()
-            page.wait_for_load_state("networkidle")
-            
-            # Wait for coupons to load
-            status_text.text("Waiting for coupons to load...")
-            progress_bar.progress(80)
-            
-            # Find percentage coupons
-            status_text.text("Finding percentage discount coupons...")
-            coupon_containers = page.locator("div.local-coupon__container").all()
-            
-            # Filter coupons with "%" in description
-            for coupon in coupon_containers:
-                try:
-                    description_element = coupon.locator(".local-coupon__description p")
-                    description_text = description_element.inner_text()
-                    
-                    if "%" in description_text:
-                        coupon_code = coupon.locator("a").get_attribute("data-couponcode")
-                        
-                        try:
-                            price_element = coupon.locator(".local-coupon__price")
-                            price = price_element.inner_text()
-                        except:
-                            price = "N/A"
-                        
-                        # Add coupon to data list
-                        coupons_data.append({
-                            "Store Address": store_full_address,
-                            "Coupon Description": description_text,
-                            "Coupon Code": coupon_code,
-                            "Price": price
-                        })
-                        
-                        status_text.text(f"Found coupon: {description_text}")
-                except Exception as e:
-                    status_text.text(f"Error processing a coupon: {str(e)}")
-            
-            progress_bar.progress(100)
-            status_text.text(f"Found {len(coupons_data)} percentage coupons for {store_full_address}")
-            
-        except Exception as e:
-            status_text.text(f"An error occurred: {str(e)}")
+    try:
+        # Step 1: Find store ID by address
+        status_text.text("Searching for store locations...")
+        progress_bar.progress(20)
+        
+        search_url = f"{BASE_URL}/en/pages/order/#!/locations/search/"
+        session = requests.Session()
+        
+        # First get the search page to set cookies
+        session.get(search_url)
+        
+        # Search for Montreal locations
+        search_params = {
+            'type': 'Carryout',
+            'c': 'Montreal, QC'
+        }
+        
+        response = session.get(f"{BASE_URL}/pps/finder/storelocator", params=search_params)
+        stores = response.json().get('result', {}).get('Stores', [])
+        
+        # Find matching store
+        target_store = None
+        for store in stores:
+            if target_address.lower() in store.get('StreetName', '').lower():
+                target_store = store
+                break
+        
+        if not target_store:
+            status_text.text(f"No store found with address containing '{target_address}'")
             return pd.DataFrame()
-        finally:
-            browser.close()
-    
-    # Convert data to DataFrame
-    if coupons_data:
-        return pd.DataFrame(coupons_data)
-    else:
+        
+        store_id = target_store['StoreID']
+        store_address = f"{target_store['StreetName']}, {target_store['City']}"
+        status_text.text(f"Found store: {store_address}")
+        progress_bar.progress(40)
+        
+        # Step 2: Get coupons for this store
+        status_text.text("Fetching coupons...")
+        progress_bar.progress(60)
+        
+        menu_url = f"{BASE_URL}/en/pages/order/menu#!/menu/category/coupons/"
+        response = session.get(menu_url)
+        
+        # Get the store-specific coupons page
+        coupon_params = {
+            'storeid': store_id,
+            'coupons': 'all'
+        }
+        response = session.get(f"{BASE_URL}/order/loadcoupons", params=coupon_params)
+        
+        # Parse coupons
+        soup = BeautifulSoup(response.text, 'html.parser')
+        coupon_items = soup.find_all('div', class_='local-coupon__container')
+        
+        for coupon in coupon_items:
+            description = coupon.find('p', class_='local-coupon__description')
+            if description and '%' in description.text:
+                coupon_code = coupon.find('a').get('data-couponcode', '')
+                price = coupon.find('div', class_='local-coupon__price')
+                
+                coupons_data.append({
+                    "Store Address": store_address,
+                    "Coupon Description": description.text.strip(),
+                    "Coupon Code": coupon_code,
+                    "Price": price.text.strip() if price else "N/A"
+                })
+        
+        progress_bar.progress(100)
+        status_text.text(f"Found {len(coupons_data)} coupons for {store_address}")
+        
+    except Exception as e:
+        status_text.text(f"An error occurred: {str(e)}")
         return pd.DataFrame()
+    
+    return pd.DataFrame(coupons_data) if coupons_data else pd.DataFrame()
 
 # Create the Streamlit UI
 st.sidebar.header("Search Settings")
