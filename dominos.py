@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -31,11 +32,11 @@ def scrape_store_by_address(target_address, progress_bar, status_text):
     status_text.text("Setting up the WebDriver...")
     progress_bar.progress(10)
     
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
     driver = webdriver.Chrome(options=options)
     
     # Prepare CSV StringIO for storing coupon data
