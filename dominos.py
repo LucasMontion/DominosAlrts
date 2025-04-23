@@ -6,6 +6,7 @@ import streamlit as st
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -15,6 +16,19 @@ st.set_page_config(page_title="Dominos Coupon Finder", page_icon="🍕")
 
 st.title("🍕 Dominos Coupon Finder")
 st.write("Enter a partial address to find percentage discount coupons at your local Dominos store.")
+
+def get_driver():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.binary_location = "/usr/bin/chromium-browser"
+
+    service = Service("/usr/lib/chromium-browser/chromedriver")
+
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
 
 def scrape_store_by_address(target_address, progress_bar, status_text):
     """
@@ -31,13 +45,8 @@ def scrape_store_by_address(target_address, progress_bar, status_text):
     # Setup the webdriver
     status_text.text("Setting up the WebDriver...")
     progress_bar.progress(10)
-    
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
 
-    driver = webdriver.Chrome(options=options)
+    driver = get_driver()
     
     # Prepare CSV StringIO for storing coupon data
     coupons_data = []
